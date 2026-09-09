@@ -1,0 +1,937 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage{bold}
+
+\title{$\sigma_0$ \,:\, large scale quant foundation models}
+\author{Aaron Rose}
+\started{5 September 2026}
+
+\begin{document}
+\maketitle
+\boldcontents
+
+% ================================================================
+\section{Data}
+
+\subsection{The book}
+
+A snapshot of the order book at time $t$ is
+%
+\begin{equation}
+S_t \;=\;
+\begin{bmatrix}
+a_1 & u_1 & b_1 & w_1 \\[1pt]
+\vdots & \vdots & \vdots & \vdots \\[1pt]
+a_{10} & u_{10} & b_{10} & w_{10}
+\end{bmatrix}
+\;\in\; \mathbb{R}^{10\times 4},
+\label{eq:snapshot}
+\end{equation}
+%
+with $a_j$ and $b_j$ the ask and bid price at level $j$, and $u_j$ and $w_j$
+the depth at that price. Prices are integers in units of $10^{-4}$ dollars, so
+one cent is $100$. Figure~\ref{fig:book} shows one snapshot.
+
+% ---------------------------------------------------------------- fig 1
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+\node[anchor=east] at (-6,88) {price};
+\node[anchor=east] at (104,88) {size};
+
+% ---- asks, best at the bottom, price increasing upward
+\foreach \i/\p/\s in {1/1010100/200, 2/1010200/1200, 3/1010300/400,
+                      4/1010400/900, 5/1010500/1500, 6/1010600/700,
+                      7/1010700/1100, 8/1010800/300, 9/1010900/1800,
+                      10/1011000/600} {
+  \pgfmathsetmacro{\y}{6+(\i-1)*7.8}
+  \pgfmathsetmacro{\w}{\s/22}
+  \fill[Noisy!45] (0,\y) rectangle (\w,\y+4.8);
+  \node[anchor=east] at (-6,\y+2.4) {\p};
+  \node[anchor=east] at (104,\y+2.4) {\s};
+}
+
+% ---- bids, best at the top, price decreasing downward
+\foreach \i/\p/\s in {1/1009900/600, 2/1009800/1000, 3/1009700/150,
+                      4/1009600/1300, 5/1009500/800, 6/1009400/400,
+                      7/1009300/1600, 8/1009200/900, 9/1009100/500,
+                      10/1009000/1200} {
+  \pgfmathsetmacro{\y}{-12-(\i-1)*7.8}
+  \pgfmathsetmacro{\w}{\s/22}
+  \fill[Data!45] (0,\y) rectangle (\w,\y+4.8);
+  \node[anchor=east] at (-6,\y+2.4) {\p};
+  \node[anchor=east] at (104,\y+2.4) {\s};
+}
+
+% ---- the untraded band between the two best quotes
+\draw[Ink!30,line width=0.3pt] (0,6) -- (84,6);
+\draw[Ink!30,line width=0.3pt] (0,-6) -- (84,-6);
+\draw[<->,Acc,line width=0.5pt] (14,6) -- (14,-6);
+\node[anchor=west,color=Acc,fill=white,inner sep=1.5pt] at (18,0) {$a_1-b_1=200$};
+
+% ---- braces naming the two sides
+\draw[decorate,decoration={brace,amplitude=4pt},Noisy,line width=0.5pt]
+      (110,81) -- (110,6);
+\node[anchor=west,color=Noisy] at (117,43.5) {asks $a_1 \ldots a_{10}$};
+\draw[decorate,decoration={brace,amplitude=4pt},Data,line width=0.5pt]
+      (110,-6) -- (110,-82);
+\node[anchor=west,color=Data] at (117,-44) {bids $b_1 \ldots b_{10}$};
+
+\end{tikzpicture}
+\caption{One snapshot, ten levels a side.}
+\label{fig:book}
+\end{figure}
+
+A day is $N$ such snapshots,
+%
+\begin{equation}
+W \;=\;
+\bigl[\;
+\underbrace{\delta \;\;\; t_{\mathrm{s}} \;\;\; t_{\mathrm{n}}}_{\text{metadata},\ 3}
+\;\;{\color{Ink!45}\rule[-0.55ex]{0.4pt}{2.1ex}}\;\;
+\underbrace{a_1 \;\; u_1 \;\; b_1 \;\; w_1 \;\;\cdots\;\;
+            a_{10} \;\; u_{10} \;\; b_{10} \;\; w_{10}}_{\text{snapshot},\ 40}
+\;\bigr]
+\;\in\; \mathbb{R}^{N\times 43},
+\label{eq:wide}
+\end{equation}
+%
+where $\delta$ is the change in the mid, and $t_{\mathrm{s}}$ and
+$t_{\mathrm{n}}$ are the seconds and nanoseconds of the event's timestamp, kept
+apart so that neither loses integer precision. Converting the seconds to
+nanoseconds and adding the remainder gives the time of the event,
+%
+\begin{equation}
+\tau \;=\; 10^{9}\,t_{\mathrm{s}} + t_{\mathrm{n}} ,
+\label{eq:tau}
+\end{equation}
+%
+which is what places it on the grid in \eqref{eq:ffill}.
+
+\subsection{Discrete time}
+
+The book has a state at nanosecond resolution. It is sampled at $1$ ms
+intervals,
+%
+\begin{equation}
+t_k \;=\; t_0 + k\Delta, \qquad k = 0,1,2,\ldots, \qquad \Delta = 1\ \text{ms},
+\label{eq:grid}
+\end{equation}
+%
+with $F_k$ the book at $t_k$,
+%
+\begin{equation}
+F_k \;=\; S_{t_k} \;\in\; \mathbb{R}^{10\times 4}.
+\label{eq:ffill}
+\end{equation}
+%
+% ---------------------------------------------------------------- fig clock
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+% ---- sample times
+\foreach \x/\k in {20/0, 60/1, 100/2, 140/3, 180/4, 220/5, 260/6} {
+  \draw[Ink!35,line width=0.3pt] (\x,-14) -- (\x,32);
+  \node[anchor=south] at (\x,33) {$F_{\k}$};
+  \node[anchor=north] at (\x,-16) {$t_{\k}$};
+}
+
+% ---- the tape, buys above the line and sells below
+\draw[Ink,line width=0.5pt] (-6,0) -- (278,0);
+\node[anchor=west] at (281,0) {time};
+\foreach \x in {14,35,52,72,112,130,168,175,232,255}
+  \draw[Data,line width=1.2pt] (\x,0) -- (\x,6);
+\foreach \x in {8,48,55,95,118,155,172,250}
+  \draw[Noisy,line width=1.2pt] (\x,0) -- (\x,-6);
+\draw[Data,line width=1.2pt] (285,-15) -- (285,-9);
+\node[anchor=west] at (288,-12) {buy};
+\draw[Noisy,line width=1.2pt] (285,-27) -- (285,-21);
+\node[anchor=west] at (288,-24) {sell};
+
+% ---- which event each frame takes its state from
+\foreach \e/\g in {14/20, 55/60, 95/100, 130/140, 175/180, 255/260} {
+  \draw[Acc,->,line width=0.5pt] (\e,8) |- (\g,14);
+}
+\draw[Acc,->,dashed,line width=0.5pt] (181,22) -- (219,22);
+\node[anchor=south,color=Acc] at (200,23) {repeat};
+
+\end{tikzpicture}
+\caption{Each frame holds the book as the last event left it.}
+\label{fig:clock}
+\end{figure}
+
+This is done over the ten level book data, one trading day of one ticker at a
+time. The corpus covers the S\&P 500 from 2022 to 2025, and the first state
+model runs used GOOG.
+
+The frames are cut into consecutive windows of $L=512$,
+%
+\begin{equation}
+F \;=\;
+\begin{bmatrix} F_0 \\[1pt] \vdots \\[1pt] F_{L-1} \end{bmatrix}
+\;\in\; \mathbb{R}^{512\times 40},
+\label{eq:window}
+\end{equation}
+%
+and the day is these windows end to end,
+%
+\begin{equation}
+\underbrace{F^{(1)},\;\; F^{(2)},\;\; F^{(3)},\;\; \ldots,\;\; F^{(M)}}
+           _{\text{one day},\ M \approx 45{,}700} .
+\label{eq:stream}
+\end{equation}
+%
+Given the first $n$ rows of a window, the remaining $L-n$ are generated in one
+pass. Training draws $n$ from $\{0,\ldots,256\}$, so between $256$ and $512$ ms
+is generated.
+
+% ---------------------------------------------------------------- fig stream
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+% ---- legend
+% bounding box forced symmetric about the bars, so they sit centred on the page
+\path (-43,0) (339,0);
+\fill[Data!75] (93.5,55) rectangle (102.5,64);
+\node[anchor=west] at (105.5,59.5) {given};
+\fill[Data!12] (145.5,54) rectangle (155.5,65);
+\draw[pattern=crosshatch dots,pattern color=Data,draw=Ink!50,line width=0.3pt]
+      (145.5,54) rectangle (155.5,65);
+\node[anchor=west] at (158.5,59.5) {generated};
+
+% ---- one window, three amounts of context
+\foreach \n/\g/\y/\out in {0/48/34/512, 128/98/17/384, 256/148/0/256} {
+  \node[anchor=east] at (42,\y+7) {$n=\n$};
+  \fill[Data!75] (48,\y) rectangle (\g,\y+14);
+  \fill[Data!12] (\g,\y) rectangle (248,\y+14);
+  \draw[pattern=crosshatch dots,pattern color=Data,draw=none] (\g,\y) rectangle (248,\y+14);
+  \draw[Ink!50,line width=0.3pt] (48,\y) rectangle (248,\y+14);
+  \node[anchor=west] at (254,\y+7) {generate $\out$ ms};
+}
+
+\end{tikzpicture}
+\caption{Whatever is given, the rest of the window is generated.}
+\label{fig:stream}
+\end{figure}
+
+\subsection{The chart transform}
+
+The book states are encoded into a different but lossless representation. The
+model reads and writes these coordinates, and the book is recovered by decoding
+at the end. With the mid
+%
+\begin{equation}
+m_k \;=\; \tfrac{1}{2}\bigl(a_1+b_1\bigr)
+\label{eq:mid}
+\end{equation}
+%
+at frame $k$, Table~\ref{tab:chart} gives every entry.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{cll}
+\toprule
+ & in words & expression \\
+\midrule
+$s$   & the log spread                    & $\log(a_1-b_1)$ \\
+$d$   & change in the mid over one frame  & $m_k - m_{k-1}$, zero at $k=0$ \\
+$g_j$ & log distance between ask levels $j$ and $j+1$ & $\log(a_{j+1}-a_j)$ \\
+$h_j$ & log distance between bid levels $j$ and $j+1$ & $\log(b_j-b_{j+1})$ \\
+$u_j$ & depth at ask level $j$            & unchanged \\
+$w_j$ & depth at bid level $j$            & unchanged \\
+\bottomrule
+\end{tabular}
+\caption{The entries of a chart frame.}
+\label{tab:chart}
+\end{table}
+
+Distances run $j=1,\ldots,9$ and depths $j=1,\ldots,10$, and each logarithm
+takes a floor of $1$, the price unit. A snapshot and a window then read
+%
+\begin{equation}
+C_k \;=\;
+\begin{bmatrix}
+s & u_1 & d & w_1 \\[1pt]
+g_1 & u_2 & h_1 & w_2 \\[1pt]
+\vdots & \vdots & \vdots & \vdots \\[1pt]
+g_9 & u_{10} & h_9 & w_{10}
+\end{bmatrix}
+\in \mathbb{R}^{10\times 4},
+\qquad
+C \;=\;
+\begin{bmatrix} C_0 \\[1pt] \vdots \\[1pt] C_{L-1} \end{bmatrix}
+\in \mathbb{R}^{512\times 40},
+\label{eq:chart}
+\end{equation}
+%
+the same shapes as $S_t$ and $F$. Figure~\ref{fig:chart} marks the three
+distances on the book.
+
+% ---------------------------------------------------------------- fig chart
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+% ---- three levels a side, the bar centre carrying the price
+\foreach \i/\s in {1/200, 2/1200, 3/400} {
+  \pgfmathsetmacro{\y}{10+(\i-1)*13}
+  \pgfmathsetmacro{\w}{\s/26}
+  \fill[Noisy!45] (0,\y-2.5) rectangle (\w,\y+2.5);
+  \node[anchor=east,color=Noisy] at (-4,\y) {$a_\i$};
+}
+\foreach \i/\s in {1/600, 2/1000, 3/150} {
+  \pgfmathsetmacro{\y}{-10-(\i-1)*13}
+  \pgfmathsetmacro{\w}{\s/26}
+  \fill[Data!45] (0,\y-2.5) rectangle (\w,\y+2.5);
+  \node[anchor=east,color=Data] at (-4,\y) {$b_\i$};
+}
+
+% ---- the mid
+\draw[Ink!35,densely dotted] (0,0) -- (60,0);
+\node[anchor=east] at (-4,0) {$m_k$};
+
+% ---- the three marked distances
+\draw[<->,Acc,line width=0.5pt] (70,10) -- (70,-10);
+\node[anchor=west,color=Acc] at (74,0) {$a_1-b_1$};
+\draw[<->,Acc,line width=0.5pt] (120,23) -- (120,10);
+\node[anchor=west,color=Acc] at (124,16.5) {$a_2-a_1$};
+\draw[<->,Acc,line width=0.5pt] (120,-10) -- (120,-23);
+\node[anchor=west,color=Acc] at (124,-16.5) {$b_1-b_2$};
+
+% ---- the resulting entries
+\draw[->,Ink,line width=0.5pt] (176,0) -- (196,0);
+\node[anchor=south] at (186,2) {encode};
+\node[anchor=west] at (206,22) {$s\;=\;\log(a_1-b_1)$};
+\node[anchor=west] at (206,9)  {$d\;=\;m_k-m_{k-1}$};
+\node[anchor=west] at (206,-6) {$g_1\;=\;\log(a_2-a_1)$};
+\node[anchor=west] at (206,-20){$h_1\;=\;\log(b_1-b_2)$};
+
+\end{tikzpicture}
+\caption{Each price becomes a log distance.}
+\label{fig:chart}
+\end{figure}
+
+Decoding inverts this,
+%
+\begin{equation}
+m_k \;=\; m_0 + \sum_{i\le k} d_i, \qquad
+a_1 \;=\; m_k + \tfrac{1}{2}e^{s}, \qquad
+b_1 \;=\; m_k - \tfrac{1}{2}e^{s},
+\label{eq:decodetouch}
+\end{equation}
+%
+\begin{equation}
+a_{j+1} \;=\; a_j + e^{g_j}, \qquad
+b_{j+1} \;=\; b_j - e^{h_j} .
+\label{eq:decodeladder}
+\end{equation}
+%
+with the anchor $m_0$, the mid of the first frame, the only absolute price
+kept. In single precision the round trip returns integer prices exactly.
+
+Why the transform is used.
+
+\begin{itemize}\setlength{\itemsep}{1pt}
+\item Impossible books become impossible. A crossed book, with buys above
+      sells, has no representation in these coordinates. BookDiT reports
+      $54.4$ percent of frames crossed when the same model is trained in raw
+      coordinates, against $0.000$ in this one \cite{bookdit}.
+\item Fewer digits, and a stationary target. Raw prices are of order $10^6$ and
+      drift over months, where their log distances are of order $10$ and do
+      not.
+\end{itemize}
+
+\subsection{The input tensor}
+
+Each row of a window is a frame, the book at one instant, and each column is a
+channel, a single quantity followed across the whole window.
+Figure~\ref{fig:grid} shows the two readings.
+
+% ---------------------------------------------------------------- fig grid
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+% ---- the shaded column and row
+\fill[Noisy!25] (45,0) rectangle (60,100);
+\fill[Data!25]  (0,55) rectangle (150,65);
+\fill[Acc!30]   (45,55) rectangle (60,65);
+
+% ---- the grid
+\foreach \x in {0,15,...,150} \draw[Ink!30,line width=0.3pt] (\x,0) -- (\x,100);
+\foreach \y in {0,10,...,100} \draw[Ink!30,line width=0.3pt] (0,\y) -- (150,\y);
+\draw[Ink!60,line width=0.5pt] (0,0) rectangle (150,100);
+
+% ---- what each direction is
+\draw[<->,Ink!70,line width=0.4pt] (0,110) -- (150,110);
+\node[anchor=south] at (75,112) {$40$ channels};
+\draw[<->,Ink!70,line width=0.4pt] (-10,0) -- (-10,100);
+\node[anchor=east] at (-14,50) {$512$ frames};
+
+\draw[Noisy,->,line width=0.5pt] (52.5,-16) -- (52.5,-3);
+\node[anchor=north,color=Noisy] at (52.5,-18) {a channel};
+\draw[Data,->,line width=0.5pt] (166,60) -- (153,60);
+\node[anchor=west,color=Data] at (169,60) {a frame};
+
+\end{tikzpicture}
+\caption{A window read down its columns and across its rows.}
+\label{fig:grid}
+\end{figure}
+
+The forty channels differ by orders of magnitude, a log spread near five
+sitting beside a depth in the thousands, so each is standardised separately
+over the training days,
+%
+\begin{equation}
+\widetilde{C} \;=\; \frac{C-\mu}{\sigma}, \qquad \mu,\ \sigma \;\in\; \mathbb{R}^{40},
+\label{eq:norm}
+\end{equation}
+%
+with one mean and one standard deviation per channel. Both are stored inside
+every checkpoint, so that generation reproduces the scale the model was trained
+on. Windows are then stacked into batches, and the tensor the network is given
+is
+%
+\begin{equation}
+X \;=\;
+\begin{bmatrix} \widetilde{C}^{(1)} \\[1pt] \vdots \\[1pt] \widetilde{C}^{(B)} \end{bmatrix}
+\;\in\; \mathbb{R}^{32\times 512\times 40}.
+\label{eq:tensor}
+\end{equation}
+%
+The logarithm of one plus the count of events in each interval can be appended
+as a $41$st channel, off by default.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{llr}
+\toprule
+quantity & symbol & default \\
+\midrule
+frame interval   & $\Delta$ & $1$ ms \\
+levels           &          & $10$ \\
+channels         &          & $40$ \\
+window length    & $L$      & $512$ frames, $512$ ms \\
+maximum context  & $n$      & $256$ frames \\
+batch            & $B$      & $32$ \\
+\bottomrule
+\end{tabular}
+\caption{Defaults.}
+\label{tab:defaults}
+\end{table}
+
+One training example is half a second of book on an axis of time and an axis
+of channel, the same object a video model denoises.
+
+
+\clearpage
+% ================================================================
+\section{Pretraining}
+
+\subsection{The objective}
+
+Training consumes the tensor of Section~1.4. One row holds one frame, and its
+forty entries are the quantities of Table~\ref{tab:chart} ordered by book level,
+%
+\begin{equation}
+\bigl(\;
+\underbrace{s \;\; u_1 \;\; d \;\; w_1}_{\text{level }1}
+\;\;
+\underbrace{g_1 \;\; u_2 \;\; h_1 \;\; w_2}_{\text{level }2}
+\;\;\cdots\;\;
+\underbrace{g_9 \;\; u_{10} \;\; h_9 \;\; w_{10}}_{\text{level }10}
+\;\bigr) \;\in\; \mathbb{R}^{40},
+\label{eq:row}
+\end{equation}
+%
+where each entry is standardised by \eqref{eq:norm}. A window is $512$
+consecutive rows and a batch is $32$ windows,
+%
+\begin{equation}
+X \;\in\; \mathbb{R}^{32\times 512\times 40},
+\label{eq:data}
+\end{equation}
+%
+each batch supplying one gradient step. Figure~\ref{fig:tensor} shows a batch as
+a stack of windows.
+
+% ---------------------------------------------------------------- fig tensor
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+\foreach \i in {2,1} {
+  \pgfmathsetmacro{\ox}{\i*22}
+  \pgfmathsetmacro{\oy}{\i*16}
+  \fill[white] (\ox,\oy) rectangle (\ox+80,\oy+100);
+  \draw[Ink!55,line width=0.6pt]
+    (\ox+6,\oy) -- (\ox,\oy) -- (\ox,\oy+100) -- (\ox+6,\oy+100);
+  \draw[Ink!55,line width=0.6pt]
+    (\ox+74,\oy) -- (\ox+80,\oy) -- (\ox+80,\oy+100) -- (\ox+74,\oy+100);
+}
+\fill[Wash!10] (0,0) rectangle (80,100);
+\foreach \x in {8,16,...,72} \draw[Ink!20,line width=0.3pt] (\x,0) -- (\x,100);
+\foreach \y in {10,20,...,90} \draw[Ink!20,line width=0.3pt] (0,\y) -- (80,\y);
+\draw[Ink!80,line width=0.8pt] (6,0) -- (0,0) -- (0,100) -- (6,100);
+\draw[Ink!80,line width=0.8pt] (74,0) -- (80,0) -- (80,100) -- (74,100);
+
+\node[anchor=south west] at (0,102) {$\widetilde{C}^{(1)}$};
+\node[anchor=south west] at (22,118) {$\cdots$};
+\node[anchor=south west] at (44,134) {$\widetilde{C}^{(32)}$};
+
+\draw[<->,Ink!70,line width=0.4pt] (0,-9) -- (80,-9);
+\node[anchor=north] at (40,-12) {$40$ channels};
+\draw[<->,Ink!70,line width=0.4pt] (-10,0) -- (-10,100);
+\node[anchor=east] at (-13,50) {$512$ frames};
+
+\end{tikzpicture}
+\caption{The batch tensor $X$, thirty two windows of $512$ frames by $40$ channels.}
+\label{fig:tensor}
+\end{figure}
+
+Each batch comprises thirty two independent draws,
+%
+\begin{equation}
+X^{(b)} \sim p, \quad
+\epsilon^{(b)} \sim \mathcal{N}(0,I), \quad
+t_b \sim \mathcal{U}[0,1], \quad
+n_b \sim \mathcal{U}\{0,\ldots,256\},
+\label{eq:draws}
+\end{equation}
+%
+where $p$ is the distribution of the windows of Section~1 and the entries of
+$\epsilon^{(b)}$ are independent. The window and its noise
+are linearly interpolated at the level drawn for that slot,
+%
+\begin{equation}
+x^{(b)} \;=\; (1-t_b)\,X^{(b)} \;+\; t_b\,\epsilon^{(b)},
+\label{eq:interp}
+\end{equation}
+%
+which equals $X^{(b)}$ at $t=0$ and $\epsilon^{(b)}$ at $t=1$.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lrrrrl}
+\toprule
+ & $\tilde{s}$ & $\tilde{u}_1$ & $\tilde{d}$ & $\tilde{w}_1$ & \\
+\midrule
+$X$        &  0.42 & $-1.13$ &  0.05 &  0.88 & $t=0$ \\
+           &  0.24 & $-0.41$ & $-0.12$ &  0.69 & $t=0.25$ \\
+           &  0.06 &  0.32 & $-0.29$ &  0.51 & $t=0.5$ \\
+           & $-0.13$ &  1.05 & $-0.45$ &  0.32 & $t=0.75$ \\
+$\epsilon$ & $-0.31$ &  1.77 & $-0.62$ &  0.14 & $t=1$ \\
+\midrule
+$\epsilon-X$ & $-0.73$ & 2.90 & $-0.67$ & $-0.74$ & the target \\
+\bottomrule
+\end{tabular}
+\caption{Four of the forty standardised channels of one frame, its noise, and
+their interpolants.}
+\label{tab:mixing}
+\end{table}
+
+The interpolant traverses the segment from $X^{(b)}$ to $\epsilon^{(b)}$ in unit
+time, and its velocity
+%
+\begin{equation}
+\frac{\mathrm{d}x^{(b)}}{\mathrm{d}t} \;=\; \epsilon^{(b)} - X^{(b)}
+\label{eq:velocity}
+\end{equation}
+%
+is the regression target.
+
+The network takes $x^{(b)}$ and $t_b$ as arguments and predicts the velocity.
+The minimiser of the squared error is the conditional mean,
+%
+\begin{equation}
+v^{*}(x,t) \;=\;
+\operatorname*{argmin}_{v}\;
+\mathbb{E}\bigl\|(\epsilon-X) - v(x_t,t)\bigr\|^2
+\;=\; \mathbb{E}\bigl[\,\epsilon-X \;\bigm|\; x_t = x\,\bigr],
+\label{eq:expectation}
+\end{equation}
+%
+the average velocity of the interpolants passing through $x$ at time $t$
+\cite{rectified}. Integrating this field carries noise to samples distributed as
+$p$, and Section~3 gives the solver.
+
+% ---------------------------------------------------------------- fig vector
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1pt,y=1pt,font=\footnotesize,color=Ink]
+
+\node[anchor=west,color=Ink!60] at (16,72) {$\mathbb{R}^{512\times 40}$};
+
+% ---- the segment between a window and its noise
+\draw[Ink!35,dashed,line width=0.5pt] (20,25) -- (170,70);
+\fill[Data]  (20,25) circle (2.2pt);
+\node[anchor=east,color=Data] at (16,25) {$X$};
+\fill[Noisy] (170,70) circle (2.2pt);
+\node[anchor=west,color=Noisy] at (174,70) {$\epsilon$};
+
+% ---- the same displacement, wherever you stand on it
+\draw[Ink!45,->,line width=0.6pt] (42.5,31.75) -- (67.2,39.2);
+\draw[Ink!45,->,line width=0.6pt] (128,57.4) -- (152.7,64.8);
+\draw[Acc,->,line width=1.2pt] (87.5,45.25) -- (112.2,52.7);
+\node[anchor=north west,color=Acc] at (110,51) {$\epsilon-X$};
+\fill[Ink] (87.5,45.25) circle (1.8pt);
+\node[anchor=south east,inner sep=1.5pt] at (86,46) {$x_t$};
+
+\end{tikzpicture}
+\caption{The segment from $X$ to $\epsilon$ in $\mathbb{R}^{512\times 40}$, and its constant velocity.}
+\label{fig:vector}
+\end{figure}
+
+The field is modelled by a network $v_\theta$ with parameters
+$\theta\in\mathbb{R}^{P}$. Writing $\|\cdot\|^2$ for the mean squared entry of
+its argument, the batch objective is
+%
+\begin{equation}
+L(\theta) \;=\; \frac{1}{32}\sum_{b=1}^{32}
+\bigl\|\,\bigl(\epsilon^{(b)}-X^{(b)}\bigr)
+- v_\theta\bigl(x^{(b)},t_b\bigr)\bigr\|^2 .
+\label{eq:loss}
+\end{equation}
+%
+The draws are held fixed, so $L$ depends on $\theta$ alone, and it is minimised
+by descent. The output layer of $v_\theta$ is initialised at zero, so
+$v_\theta$ vanishes identically before training. Section~2.2 conditions the
+model on part of each window, which replaces \eqref{eq:loss} with the objective
+actually used.
+
+
+\subsection{Conditioning}
+
+Sampling from $p$ produces $512$ ms of a book resembling recorded ones but
+bearing no relation to any particular book.
+A simulator starts from the book as it stands and asks what follows, so what is
+required is the distribution of continuations of a given beginning. Each window
+is therefore drawn with a context length
+%
+\begin{equation}
+n_b \;\sim\; \mathcal{U}\{0,\ldots,256\},
+\label{eq:ctx}
+\end{equation}
+%
+fixing how much of it is given to the network and how much it must produce, and
+the model samples from
+%
+\begin{equation}
+p\bigl(X_{\ge n_b} \mid X_{< n_b}\bigr),
+\label{eq:conddist}
+\end{equation}
+%
+where $X_{<n}$ and $X_{\ge n}$ are the first $n$ frames of a window and the
+remainder.
+
+The given frames are supplied on their own channels beside the interpolant,
+together with an indicator of which frames they are, giving $81$ input channels
+against the $40$ of the unconditional case. Writing $n$ for $n_b$, the input is
+%
+\begin{equation}
+\left[
+\begin{array}{ccc}
+x_0 & X_0 & 0 \\[1pt]
+\vdots & \vdots & \vdots \\[1pt]
+x_{n-1} & X_{n-1} & 0 \\[1pt]
+x_n & 0 & 1 \\[1pt]
+\vdots & \vdots & \vdots \\[1pt]
+x_{511} & 0 & 1
+\end{array}
+\right]
+\;\longmapsto\;
+\left[
+\begin{array}{c}
+\hat{v}_0 \\[1pt]
+\vdots \\[1pt]
+\hat{v}_{n-1} \\[1pt]
+\hat{v}_n \\[1pt]
+\vdots \\[1pt]
+\hat{v}_{511}
+\end{array}
+\right]
+\label{eq:condinput}
+\end{equation}
+%
+from $\mathbb{R}^{512\times 81}$ to $\mathbb{R}^{512\times 40}$, the input
+blocks being the interpolant, the window on the given frames and the indicator,
+of widths $40$, $40$ and $1$. Here $x_k$ and $X_k$ are the $40$ channels of
+frame $k$ in the interpolant and in the window, and $\hat{v}_k$ is the velocity
+returned at that row.
+
+The first $n_b$ rows of the output are discarded. The rest are scored against
+the target and averaged,
+%
+\begin{equation}
+\ell_b \;=\; \frac{1}{512-n_b} \sum_{k=n_b}^{511}
+\bigl\| \hat{v}^{(b)}_k - \bigl(\epsilon^{(b)}_k - X^{(b)}_k\bigr) \bigr\|^2 ,
+\label{eq:windowloss}
+\end{equation}
+%
+with the norm the mean squared entry over the forty channels of a row, and the
+objective is their mean over the batch,
+%
+\begin{equation}
+L(\theta) \;=\; \frac{1}{32}\sum_{b=1}^{32} \ell_b .
+\label{eq:condloss}
+\end{equation}
+%
+Dividing by $512-n_b$ weights every window equally, whatever fraction of it is
+generated. On a given row the window already appears in the input, so its target
+follows from the interpolation and it is excluded.
+
+The interpolant is noised at every frame and the given frames are never
+substituted into it, so training and generation present the same input.
+
+The range of $n_b$ trains one network across every amount of history, and
+$n_b=0$ supplies the unconditional case.
+
+\subsection{The optimiser}
+
+The network defines a parameterised function $v_\theta$ with $P$ trainable
+parameters,
+\[
+\theta=(\theta_1,\ldots,\theta_P)\in\mathbb{R}^P.
+\]
+
+For an input $(x,t)$, the forward pass produces the prediction $\hat v$ of
+\eqref{eq:condinput}, from which the scalar batch loss $L(\theta)$ of
+\eqref{eq:condloss} is evaluated. The loss depends on the parameters through the
+intermediate computations of the network,
+\begin{equation}
+(x,t;\theta)
+\longrightarrow z_1
+\longrightarrow \cdots
+\longrightarrow z_m
+\longrightarrow \hat v
+\longrightarrow L.
+\end{equation}
+
+The dependence of the loss on each parameter is described by the gradient
+\begin{equation}
+\nabla_\theta L
+=
+\left[
+\frac{\partial L}{\partial\theta_1},
+\ldots,
+\frac{\partial L}{\partial\theta_P}
+\right]
+\in\mathbb{R}^P.
+\end{equation}
+
+Each component $\partial L/\partial\theta_i$ gives the local sensitivity of the
+loss to $\theta_i$, with the remaining parameters held fixed. Backpropagation
+computes these derivatives efficiently by applying the chain rule backwards
+through the computational graph. Along a single path
+\[
+\theta_i\rightarrow z_1\rightarrow\cdots\rightarrow z_m\rightarrow L,
+\]
+the corresponding derivative is
+\begin{equation}
+\frac{\partial L}{\partial\theta_i}
+=
+\frac{\partial L}{\partial z_m}
+\frac{\partial z_m}{\partial z_{m-1}}
+\cdots
+\frac{\partial z_1}{\partial\theta_i},
+\end{equation}
+with contributions accumulated over all paths connecting $\theta_i$ to $L$. The
+gradient therefore provides a local direction in parameter space along which the
+loss changes.
+
+An optimiser converts these gradients into parameter updates. Writing
+\begin{equation}
+G_{i,t}
+=
+\frac{\partial L_t}{\partial\theta_i}
+\end{equation}
+for the gradient of parameter $\theta_i$ at optimisation step $t$, gradient
+descent gives
+\begin{equation}
+\theta_i^{(t+1)}
+=
+\theta_i^{(t)}
+-
+\eta G_{i,t},
+\end{equation}
+where $\eta>0$ is the learning rate. A single learning rate therefore scales all
+parameter updates, despite potentially substantial differences in gradient scale
+between parameters and over the course of training.
+
+Adam~\cite{adam} instead constructs a parameter-wise adaptive update from the
+recent history of each parameter's gradients. It maintains exponentially
+weighted estimates of the gradient and squared gradient,
+\begin{equation}
+M_{i,t}
+=
+\beta_1 M_{i,t-1}
++
+(1-\beta_1)G_{i,t},
+\end{equation}
+and
+\begin{equation}
+V_{i,t}
+=
+\beta_2 V_{i,t-1}
++
+(1-\beta_2)G_{i,t}^2.
+\end{equation}
+
+Here, $M_{i,t}$ is a smoothed estimate of the recent gradient, while $V_{i,t}$
+is a smoothed estimate of its squared magnitude. Consequently,
+$\sqrt{V_{i,t}}$ provides an estimate of the recent root-mean-square gradient
+magnitude. Dividing the first moment by this quantity normalises the update by
+the characteristic gradient scale of that parameter.
+
+Both moments are initialised at zero, $M_{i,0}=V_{i,0}=0$, which biases their
+early values towards zero. Adam removes this initialisation bias using
+\begin{equation}
+\hat M_{i,t}
+=
+\frac{M_{i,t}}{1-\beta_1^t},
+\qquad
+\hat V_{i,t}
+=
+\frac{V_{i,t}}{1-\beta_2^t}.
+\end{equation}
+The factors $1-\beta_1^t$ and $1-\beta_2^t$ account for the missing history at
+early optimisation steps; as $t$ increases, both corrections approach unity.
+
+The complete Adam update is therefore
+\begin{equation}
+\theta_i^{(t+1)}
+=
+\theta_i^{(t)}
+-
+\eta
+\frac{\hat M_{i,t}}
+{\sqrt{\hat V_{i,t}} \;+\; \xi},
+\end{equation}
+where $\xi>0$ ensures numerical stability when the estimated gradient magnitude
+is small. The numerator determines the smoothed descent direction, while the
+denominator rescales it by the recent gradient magnitude. Adam therefore reduces
+the dependence of each update on the absolute scale of its parameter's gradient,
+yielding a parameter-wise adaptive effective learning rate.
+
+The optimiser parameters used here are summarised in
+Table~\ref{tab:optimiser-settings}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lll}
+\toprule
+Symbol & Meaning & Value \\
+\midrule
+$\eta$ & learning rate & $5\times10^{-4}$ \\
+$\beta_1$ & first-moment decay & $0.9$ \\
+$\beta_2$ & second-moment decay & $0.999$ \\
+$\xi$ & numerical stability constant & $10^{-8}$ \\
+\bottomrule
+\end{tabular}
+\caption{Optimiser settings.}
+\label{tab:optimiser-settings}
+\end{table}
+
+Before the Adam moments are formed, the full gradient is clipped to unit norm.
+When clipping is active, this preserves the gradient direction while bounding its
+magnitude and limiting the effect of anomalously large gradients. Training is
+performed for $10^4$ optimisation steps.
+
+Backpropagation thus computes the sensitivity of the loss to each network
+parameter, while Adam converts these gradients and their recent first- and
+second-moment estimates into parameter updates.
+
+\begin{algorithm}[H]
+\caption{Pretraining}
+\label{alg:pretrain}
+\begin{algorithmic}[1]
+\Repeat
+  \State $X \sim p$, \; $\epsilon \sim \mathcal{N}(0,I)$, \;
+         $t \sim \mathcal{U}[0,1]$, \; $n \sim \mathcal{U}\{0,\ldots,256\}$
+  \State $x \gets (1-t)X + t\epsilon$
+  \State assemble the input of \eqref{eq:condinput} and read off $\hat{v}$
+  \State take an Adam step on $\nabla_\theta \ell$, the error of
+         \eqref{eq:windowloss} over rows $n$ to $511$
+\Until{converged}
+\end{algorithmic}
+\end{algorithm}
+
+% ================================================================
+\section{Sampling}
+
+At inference, sampling begins from a $512\times40$ tensor of independent
+standard Gaussian noise,
+\[
+x_1=\varepsilon,
+\qquad
+\varepsilon_{ij}\overset{\mathrm{i.i.d.}}{\sim}\mathcal N(0,1).
+\]
+
+The network $v_\theta(x_t,t;c)$ parameterises a time-dependent velocity field
+over the state space. This field describes how the current state $x_t$ should
+change at flow time $t$ and defines the ODE
+\[
+\frac{dx_t}{dt}=v_\theta(x_t,t;c),
+\]
+where $c$ denotes the conditioning information of \eqref{eq:condinput}, the
+given frames together with their indicator. Sampling solves this ODE from $t=1$
+to $t=0$, transporting the initial Gaussian noise towards the learned data
+distribution.
+
+The flow coordinate $t$ is artificial and is distinct from market time. Market
+time is represented by the 512 rows of $x_t$, separated by $1\,\mathrm{ms}$.
+Each integration step therefore updates the complete $512\times40$ window
+jointly rather than generating market frames sequentially. The temporal
+evolution of the order book is learned as part of the joint structure of the
+complete window.
+
+For a context length $n$, the observed prefix $X_{<n}$ is supplied through the
+conditioning channels of \eqref{eq:condinput}, while the remaining $512-n$
+frames are generated. The resulting continuation approximates a sample from
+\[
+X_{\geq n}
+\sim
+p\!\left(X_{\geq n}\mid X_{<n}\right).
+\]
+
+Using Euler integration with step size $h$, the state is updated according to
+\[
+x_{t-h}
+=
+x_t-h\,v_\theta(x_t,t;c),
+\]
+with the velocity field re-evaluated after each step. At $t=0$, the generated
+rows $X_{\geq n}$ are retained and transformed back to the original order-book
+representation. Independent noise draws produce different plausible
+continuations from the same observed context.
+
+When $n=0$, no market context is supplied and the model generates an
+unconditional $512\,\mathrm{ms}$ window. For $n>0$, the generated horizon is
+$512-n$ milliseconds. The model therefore conditions only on the observed prefix
+within the current window, while earlier market history is not explicitly
+available during generation.
+
+
+\begin{thebibliography}{99}\small
+
+\bibitem{bookdit} \textbf{BookDiT.}
+\newblock Chart representation and WanDiT backbone for limit order book
+diffusion.
+\newblock ICAIF 2026 submission, cited by \texttt{src/state}.
+
+\bibitem{adam} \textbf{Adam.} D. P. Kingma, J. Ba.
+\newblock Adam, A Method for Stochastic Optimization.
+\newblock ICLR 2015.
+\href{https://arxiv.org/abs/1412.6980}{arXiv 1412.6980}.
+
+\bibitem{rectified} \textbf{Rectified flow.} X. Liu, C. Gong, Q. Liu.
+\newblock Flow Straight and Fast, Learning to Generate and Transfer Data with
+Rectified Flow.
+\newblock ICLR 2023, UT Austin.
+\href{https://arxiv.org/abs/2209.03003}{arXiv 2209.03003}.
+
+\end{thebibliography}
+
+\end{document}

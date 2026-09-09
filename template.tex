@@ -1,0 +1,59 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage{bold}
+
+\title{Title of the document}
+\author{Your Name}
+\started{8 September 2026}
+
+\begin{document}
+\maketitle
+\boldcontents
+
+\section{Introduction}
+
+Say what the document covers and why it exists. Paragraphs are unindented with
+a blank line between them, so no manual spacing is needed.
+
+Equations are numbered and referred to by label. Terms are annotated inside the
+equation rather than listed underneath,
+%
+\begin{equation}
+y \;=\; \underbrace{a x}_{\text{signal}} \;+\; \underbrace{b}_{\text{offset}},
+\label{eq:example}
+\end{equation}
+%
+so \eqref{eq:example} explains itself.
+
+\section{Method}
+
+Write the body here. Subsections and subsubsections are available and are
+numbered to three levels.
+
+\subsection{A subsection}
+
+Tables use booktabs rules.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{cll}
+\toprule
+Symbol & Meaning & Value \\
+\midrule
+$\eta$ & a quantity   & $1$ \\
+$\beta$ & another one & $2$ \\
+\bottomrule
+\end{tabular}
+\caption{A short caption.}
+\label{tab:example}
+\end{table}
+
+\begin{thebibliography}{99}\small
+
+\bibitem{example} \textbf{Short name.} A. Author, B. Author.
+\newblock Title of the paper.
+\newblock Venue and year.
+\href{https://arxiv.org/abs/0000.00000}{arXiv 0000.00000}.
+
+\end{thebibliography}
+
+\end{document}
